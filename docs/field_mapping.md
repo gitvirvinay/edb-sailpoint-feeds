@@ -1,6 +1,6 @@
 # Field mapping
 
-Source of each SailPoint column. "Spec" columns are transcribed from the SailPoint/AMH specification.
+Source of each SailPoint column. "Spec" columns are transcribed from the SailPoint feed specification.
 
 ## Access feed (12 columns)
 
@@ -29,12 +29,12 @@ One row per login account (option 1) or per login account × role (option 2).
 |---|---|---|---|---|---|
 | 1 | name | Y | nvarchar(128) | Account name | `rolname` |
 | 2 | id | Y | nvarchar(32) | Primary key, unique account identifier | `rolname` |
-| 3 | type | Y | nvarchar(max) | As defined in TD Definition of ID Types | see README classification table |
-| 4 | subtype | Y | nvarchar(max) | As defined in TD Definition of ID Types | see README classification table |
+| 3 | type | Y | nvarchar(max) | As defined in the ID types definition | see README classification table |
+| 4 | subtype | Y | nvarchar(max) | As defined in the ID types definition | see README classification table |
 | 5 | status | Y | nvarchar(max) | Active, Inactive, Locked | from `sys.dba_users.account_status` and `rolvaliduntil` |
 | 6 | description | Y | nvarchar(max) | Generic for personal accounts; NPIDs need their purpose | `COMMENT ON ROLE`, else default text by type |
 | 7 | accountCorrelationValue | Y | nvarchar(max) | Login ID or email used to link to a person | `rolname` (= AD `sAMAccountName` for LDAP users) |
-| 8 | isPrivilegedFlag | Y | nvarchar(max) | Privileged per TD Definition of ID Types | same rule as Access feed `isPrivileged` |
+| 8 | isPrivilegedFlag | Y | nvarchar(max) | Privileged per the ID types definition | same rule as Access feed `isPrivileged` |
 | 9 | isLocked | N | nvarchar(max) | Account locked | TRUE if `account_status` contains LOCKED |
 | 10 | userFirstName | N | nvarchar(max) | First name | blank (not stored in Postgres) |
 | 11 | userLastName | N | nvarchar(max) | Last name | blank (not stored in Postgres) |

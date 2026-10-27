@@ -1,4 +1,4 @@
-# EPAS → SailPoint feeds
+# edb-sailpoint-feeds: EPAS → SailPoint feeds
 
 Nightly CSV feeds from EDB Postgres Advanced Server (EPAS) for SailPoint user and role attestation:
 
@@ -15,10 +15,14 @@ sql/access_feed.sql        Access feed query
 sql/account_feed_option1_combined.sql   Account feed: one row per account, roles joined by '|'
 sql/account_feed_option2_rows.sql       Account feed: one row per account per role
 sql/setup/01_create_sailpoint_db.sql    one-time DBA setup: feed account, database, schema
+sql/views/                 the same feeds as database views (optional; see "Views")
 scripts/ad_npid_sync.sh    looks up DB logins in AD, stores non-person IDs in sailpoint.ad_npids
 scripts/run_feeds.sh       runs everything in order; call this from cron
+scripts/apply_views.sh     creates or refreshes the views in sql/views/
 docs/field_mapping.md      SailPoint column specs and where each value comes from
+docs/requirements_prompt.md  the project requirements in one message (for AI assistants or new team members)
 .github/workflows/         optional ShellCheck check on pull requests
+.gitattributes             keeps Linux line endings for the scripts
 ```
 
 ## How it works
@@ -105,8 +109,8 @@ Requirements on the Linux server: `bash`, `psql` 12+, `ldapsearch`
 (`sudo dnf install openldap-clients` or `sudo apt install ldap-utils`).
 
 ```bash
-git clone <repo-url> /opt/epas-sailpoint-feeds
-cd /opt/epas-sailpoint-feeds
+git clone <repo-url> /opt/edb-sailpoint-feeds
+cd /opt/edb-sailpoint-feeds
 cp config/feeds.env.example config/feeds.env
 chmod 600 config/feeds.env
 vi config/feeds.env            # fill in DB, AD and output settings
@@ -122,7 +126,7 @@ scripts/run_feeds.sh           # test run
 Schedule it (daily at 02:00):
 
 ```
-0 2 * * * /opt/epas-sailpoint-feeds/scripts/run_feeds.sh >> /var/log/sailpoint_feeds.log 2>&1
+0 2 * * * /opt/edb-sailpoint-feeds/scripts/run_feeds.sh >> /var/log/sailpoint_feeds.log 2>&1
 ```
 
 The `sailpoint_feed` account needs superuser or equivalent rights, because `pg_hba_file_rules`
@@ -132,6 +136,40 @@ least-privilege alternative is included in it.
 If `run_feeds.sh` exits with code 3, `sys.dba_users` was not found in the `sailpoint`
 database (see "Database setup" step 1).
 
+## Views (optional, for checks and future use)
+
+The same feed logic is also available as database views in the `sailpoint` schema.
+`run_feeds.sh` does **not** use them yet; it still runs the files in `sql/`. The views return
+exactly the same rows, so DBAs and auditors can query the feeds directly.
+
+| View | Contents |
+|---|---|
+| `sailpoint.v_role_base` | shared logic: privilege rule, AD/local classification, status, dates |
+| `sailpoint.v_access_feed` | Access feed, 12 columns |
+| `sailpoint.v_account_feed_rows` | Account feed, one row per account per role (option 2) |
+| `sailpoint.v_account_feed_combined` | Account feed, one row per account, roles joined by `\|` (option 1) |
+
+Create or refresh them (safe to rerun; one transaction, so a failure changes nothing):
+
+```bash
+scripts/apply_views.sh
+```
+
+Run it once after the database setup, and again on every cluster whenever a file in
+`sql/views/` changes. The repo is the source of truth: never edit the views directly in the
+database. Grants for a read-only role go in `sql/views/90_grants.sql`, because recreating the
+views removes existing grants.
+
+Example checks:
+
+```sql
+SELECT * FROM sailpoint.v_account_feed_combined WHERE "type" = 'Personal ID' ORDER BY "id";
+SELECT "id", length("access") FROM sailpoint.v_account_feed_combined WHERE length("access") > 450;
+```
+
+Views have no guaranteed row order, so always add `ORDER BY`. Keep `sql/views/` and the
+feed files in `sql/` in step: a rule changed in one must be changed in the other.
+
 ## Open items before go-live
 
 - [ ] **Account feed layout**: ask SailPoint whether they want one row per account (option 1)
@@ -139,7 +177,7 @@ database (see "Database setup" step 1).
       then delete the unused SQL file from the repo.
 - [ ] **AD criteria**: ask the AD team how non-person accounts are identified (OU or attribute)
       and set `SEARCH_BASE` / `FILTER`.
-- [ ] **Spelling**: confirm type/subtype values against the TD "Definition of ID Types" document.
+- [ ] **Spelling**: confirm type/subtype values against the customer's ID types definition document.
 - [ ] **Login name match**: the AD lookup assumes DB login name = AD `sAMAccountName`.
 - [ ] **Option 1 only**: run the 450-character check at the end of the SQL file.
 - [ ] **id length**: spec allows 32 characters; Postgres role names can be up to 63.
@@ -149,4 +187,4 @@ database (see "Database setup" step 1).
 
 Work on a branch, open a pull request, and have a DBA review SQL changes before merging to `main`.
 Tag each production release (`v1.0`, `v1.1`, ...) so you can tell which version produced a feed.
-To update the server: `cd /opt/epas-sailpoint-feeds && git pull` (or `git checkout <tag>`).
+To update the server: `cd /opt/edb-sailpoint-feeds && git pull` (or `git checkout <tag>`).

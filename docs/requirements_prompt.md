@@ -45,6 +45,8 @@ Server (EPAS)**, used for user and role attestation. Deliver a GitHub-ready repo
   a clear message if something is missing.
 - Include a one-time DBA setup script and the required `pg_hba.conf` entry in the README.
 - Optional ShellCheck check via GitHub Actions. Linux line endings (`.gitattributes`).
+- The same feed logic also as optional database views (`sailpoint` schema), applied by an
+  idempotent script in one transaction; the cron job keeps using the SQL files for now.
 
 **Still unknown (waiting on other teams)**
 - SailPoint: one row per account (roles joined in `access`, which delimiter?) or one row per

@@ -5,7 +5,17 @@
 -- Run by scripts/run_feeds.sh (connection settings come from config/feeds.env).
 -- Needs a superuser (or equivalent) service account: pg_hba_file_rules and dba_users are restricted views.
 
-WITH accts AS (
+WITH RECURSIVE role_membership (member, roleid) AS (
+    -- Real group membership, direct or inherited. Used for pg_hba.conf "+group" rules,
+    -- because pg_hba.conf does NOT count a superuser as a member of every group
+    -- (pg_has_role() would, and would wrongly mark superusers as LDAP logins).
+    SELECT member, roleid FROM pg_auth_members
+    UNION
+    SELECT rm.member, am.roleid
+    FROM role_membership rm
+    JOIN pg_auth_members am ON am.member = rm.roleid
+),
+accts AS (
     SELECT
         r.oid,
         r.rolname,
@@ -22,9 +32,10 @@ WITH accts AS (
             WHERE h.auth_method = 'ldap'
               AND (   r.rolname = ANY (h.user_name)
                    OR EXISTS (SELECT 1
-                              FROM pg_roles g
-                              WHERE '+' || g.rolname = ANY (h.user_name)
-                                AND pg_has_role(r.oid, g.oid, 'MEMBER')))
+                              FROM role_membership rm
+                              JOIN pg_roles g ON g.oid = rm.roleid
+                              WHERE rm.member = r.oid
+                                AND '+' || g.rolname = ANY (h.user_name)))
         ) AS is_ldap
     FROM pg_roles r
     LEFT JOIN sys.dba_users u
@@ -46,7 +57,7 @@ SELECT
         WHEN NOT a.is_ldap                                   THEN 'Local DB Account'
         WHEN lower(a.rolname) IN (SELECT rolname FROM ad_npids)     THEN 'Non-Personal ID'
         ELSE 'Personal ID'
-    END                                          AS "type",                    -- (3) confirm exact spelling against TD doc
+    END                                          AS "type",                    -- (3) confirm exact spelling against the ID types document
     CASE
         WHEN NOT a.is_ldap                                   THEN 'Local Authentication'
         WHEN lower(a.rolname) IN (SELECT rolname FROM ad_npids)     THEN 'Application Connection'

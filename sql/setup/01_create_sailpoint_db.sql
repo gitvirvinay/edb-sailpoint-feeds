@@ -22,7 +22,7 @@
 -- 1. Feed account: a local password login (the scripts connect with it nightly).
 CREATE ROLE :"feed_user" LOGIN;
 COMMENT ON ROLE :"feed_user" IS
-    'NPID: produces the nightly SailPoint access and account CSV feeds (repo epas-sailpoint-feeds)';
+    'NPID: produces the nightly SailPoint access and account CSV feeds (repo edb-sailpoint-feeds)';
 
 -- Set its password interactively, so it never appears in a file or shell history.
 \echo 'Enter a password for' :feed_user '(store it in ~/.pgpass on the feed server):'
