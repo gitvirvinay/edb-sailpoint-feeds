@@ -1,81 +1,73 @@
 # Requirements prompt
 
-The input that describes this project in one message. Use it to rebuild or extend the repo
-with an AI assistant, or to brief a new team member. Keep it up to date when a decision
-changes. The field-by-field spec is in `docs/field_mapping.md`; attach that file with this prompt.
+The input that describes this project in one message. Use it to rebuild or extend the repo with
+an AI assistant, or to brief a new team member. Keep it up to date when a decision changes. The
+field-by-field spec is in `docs/field_mapping.md`; attach that file with this prompt.
 
 ---
 
 ## Prompt
 
-I need nightly **SailPoint access and account feeds as CSV files** from **EDB Postgres Advanced
-Server (EPAS)**, used for user and role attestation. Deliver a GitHub-ready repo named
-`edb-sailpoint-feeds`.
+I need nightly **SailPoint access and account feeds as CSV files** from several **EDB Postgres
+Advanced Server (EPAS)** clusters, used for user and role attestation: **one combined Access
+file and one combined Account file**. Deliver a GitHub-ready repo named `edb-sailpoint-feeds`.
 
 **Environment**
-- EPAS in Oracle-compatible (redwood) mode; default database `edb`, superuser `enterprisedb`.
-  Oracle-compatibility views such as `sys.dba_users` are available.
-- The feeds run on a **Linux server with bash; no PowerShell**. `psql` and `ldapsearch` are available.
-- Some database logins authenticate through **AD via LDAP** (rules in `pg_hba.conf`); others are
-  pure local password accounts.
-- **Both people and service accounts (non-person IDs) can be AD accounts.** Only AD can tell them
-  apart. AD is large, so look up only the database's own login accounts in AD.
-- Database login names match the AD `sAMAccountName`.
+- All sources are EPAS clusters in Oracle-compatible mode (`sys.dba_users` available).
+- A central **Linux server with bash (no PowerShell)** reaches every cluster's port with `psql`
+  and has `ldapsearch`. It does not host a database.
+- Some logins authenticate locally (password), others through **AD via LDAP**. Every AD account
+  has its **own line in `pg_hba.conf`**, using **search + bind** (`ldapbasedn`, `ldapbinddn`,
+  `ldapbindpasswd`, `ldapsearchattribute` or `ldapsearchfilter`); no simple bind. Each cluster
+  may use a different AD server or branch.
+- The line's `ldapbasedn` tells the account kind: `OU=Person ID` = person,
+  `OU=Non Person Id` = non-person (exact spelling).
+- No user is sent to different methods depending on address or database.
 
 **Spec** (attached: `docs/field_mapping.md`)
-- Access feed: 12 columns, one row per role that **cannot** log in (entitlements). `type` = `Role`.
-  Include built-in `pg_*` roles, with the filter left commented so it can be switched back on.
-- Account feed: 18 columns, one row per role that **can** log in. `access` is a foreign key to
-  the Access feed `id`.
+- Access feed: 12 columns, one row per role that **cannot** log in. `type` = `Role`. Include
+  built-in `pg_*` roles, with a commented filter to leave them out.
+- Account feed: 18 columns, one row per login account **per role** (rows layout). `access` is a
+  foreign key to the Access feed `id`.
 
-**Account type / subtype rules**
+**Classification (from the `pg_hba.conf` line that applies to each login)**
 
-| Account | type | subtype |
+| Line | type | subtype |
 |---|---|---|
-| Local password login | Local DB Account | Local Authentication |
-| AD login, identified by AD as non-person | Non-Personal ID | Application Connection |
-| AD login, everyone else | Personal ID | Primary |
+| ldap, `OU=Non Person Id` | Non-Personal ID | Application Connection |
+| ldap, `OU=Person ID` | Personal ID | Primary |
+| other method, or no line | Local DB Account | Local Authentication |
+
+The line that applies: network lines only; prefer the line naming the login, then `+group`/regex,
+then `all`. Stop with a clear message if an LDAP line has neither OU, has no `ldapbasedn`, or a
+login is on LDAP lines with different OUs.
 
 **Decisions already made**
-- Dedicated database `sailpoint` with schema `sailpoint`, so nothing is stored in `edb`.
-- Feed service account: default name `sailpoint_feed`, but the name must be configurable.
-- Hosts, AD details and paths go in a config file kept out of Git; passwords go in `~/.pgpass`
-  and a `chmod 600` file, never in the repo.
-- One run script for cron that writes the CSVs safely (never half-written files) and stops with
-  a clear message if something is missing.
-- Include a one-time DBA setup script and the required `pg_hba.conf` entry in the README.
-- Optional ShellCheck check via GitHub Actions. Linux line endings (`.gitattributes`).
-- The same feed logic also as optional database views (`sailpoint` schema), applied by an
-  idempotent script in one transaction; the cron job keeps using the SQL files for now.
+- Central multi-cluster design only; one cluster = one line in `sources.conf`.
+- Logic only in SQL files sent each run, using **temporary** tables and views: nothing is
+  stored in the clusters and there is no deploy step. Connect to the `postgres` database.
+- AD lookup per cluster's `pg_hba.conf` settings (read from `pg_hba_file_rules`, including the
+  bind password, which is never stored, logged or passed on a command line); one lookup per
+  distinct AD profile. Fill first/last name for AD accounts; owner (manager) and cost centre
+  (department) for non-person accounts.
+- IDs: `CODE:name` in `id` and `access`; names show `name (CODE)`; `accountCorrelationValue`
+  never prefixed. Codes 3-5 characters A-Z/0-9 (4 or fewer advised), never changed once live;
+  refuse to publish IDs over 32 characters.
+- Runs are fully independent: any cluster or AD failure → nothing published, files already
+  published left as they are, exit 2. No comparison with earlier runs.
+- Reporting: log, exit code 0/2, `status.json`, optional email. Run logs and archived copies of
+  published files kept 90 days, never read by a run.
+- Feed account created by a one-time setup script (name configurable), superuser or
+  least-privilege grants; `hostssl` line for the central server.
+- Linux line endings (`.gitattributes`); optional ShellCheck check via GitHub Actions.
 
-**Multi-source mode (several clusters, one combined file per feed)**
-- All sources are EPAS clusters. A central Linux server pulls from each with `psql` (it can
-  reach the database ports); no database on the central server.
-- One AD lookup for all clusters' logins; each cluster's rows are loaded into that cluster's
-  `sailpoint.ad_users`, and each cluster joins its own data in the shared views.
-- IDs: `CODE:name` in `id` and `access`; `displayName`/`name` show `name (CODE)`;
-  `accountCorrelationValue` never prefixed. Codes 3-5 characters A-Z/0-9 (4 or fewer while
-  built-in `pg_*` roles are included), never changed once live; refuse to publish IDs over 32.
-- AD fills first/last name for all accounts; owner (manager) and cost centre (department)
-  for non-person accounts only.
-- Tolerant failure rule: reuse a cluster's (or AD's) last good extract for up to 48 hours,
-  then fail and leave the published files untouched. Never reuse an extract made with the
-  other account layout.
-- Reporting: log, exit codes 0 (fresh) / 1 (published with reused data) / 2 (failed),
-  a status JSON file, optional email.
-- Single-database mode stays as it was (tagged `v1.0-single`); multi-source mode is added in
-  new files, and a regression check proves the views equal the single-mode SQL files.
-
-**Still unknown (waiting on other teams)**
-- SailPoint: one row per account (roles joined in `access`, which delimiter?) or one row per
-  account x role? What should `access` be for an account with no roles?
+**Still unknown**
+- SailPoint confirming the `CODE:name` ID format and the rows layout.
 - Exact type/subtype spelling from the customer's ID types definition document.
-- SailPoint confirming the `CODE:name` ID format; the list of clusters and their codes;
-  whether the central server can send email.
-- AD team: how non-person accounts are identified (dedicated OU or an attribute such as `employeeType`).
+- How AD failures should be handled (strict for now).
 
 **End product**
 A repo I can push from Windows (Git installed) to my company's private GitHub organization,
-then clone onto the Linux server and schedule with cron.
+then clone onto the central Linux server and schedule with cron.
 
-Ask me anything you need before you start.
+Ask me anything you need before you start, one question at a time.

@@ -1,0 +1,22 @@
+# Real settings live only on the central server (the .example templates ARE committed)
+*.env
+!*.env.example
+config/sources.conf
+
+# Feed output lists every DB account and its privileges - never commit it
+*.csv
+*.csv.tmp
+*.csv.gz
+
+# Logs and credentials
+*.log
+.pgpass
+status.json
+
+# Editor / OS clutter
+.DS_Store
+Thumbs.db
+desktop.ini
+.vscode/
+.idea/
+*.swp
