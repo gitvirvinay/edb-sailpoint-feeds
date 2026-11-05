@@ -19,7 +19,7 @@ CENTRAL_ENV="${CENTRAL_ENV:-$REPO_DIR/config/central.env}"
 
 : "${SOURCES_FILE:=$REPO_DIR/config/sources.conf}"
 : "${PGUSER:=sailpoint_feed}"
-: "${PGDATABASE:=postgres}"
+: "${PGDATABASE:=sailpoint}"
 : "${PGSSLMODE:=require}"
 : "${PGCONNECT_TIMEOUT:=15}"
 : "${STATEMENT_TIMEOUT_MS:=600000}"

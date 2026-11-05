@@ -7,7 +7,7 @@
 # CODE      3-5 characters, A-Z and 0-9; use 4 or fewer (see README, "Source codes").
 #           It becomes the ID prefix ("PRD1:app_read"). NEVER change a code once it is live:
 #           SailPoint would see every account of that cluster as removed and re-added.
-# DATABASE  optional; defaults to PGDATABASE in central.env (postgres).
+# DATABASE  optional; defaults to PGDATABASE in central.env (sailpoint).
 # USER      optional; defaults to PGUSER in central.env.
 #
 # Each cluster needs the one-time setup (sql/setup), a pg_hba.conf line for the central
@@ -16,4 +16,4 @@
 # CODE   HOST                    PORT   DATABASE   USER
 PRD1     pgprd01.example.com     5444
 PRD2     pgprd02.example.com     5444
-# UAT1   pguat01.example.com     5444   postgres   sailpoint_feed_uat
+# UAT1   pguat01.example.com     5444   sailpoint  sailpoint_feed_uat

@@ -31,7 +31,9 @@ Column details: [docs/field_mapping.md](docs/field_mapping.md). Design and reaso
    (`PRD1:app_read`), combines them and publishes them atomically.
 
 **Nothing is stored in the clusters**: the SQL in `sql/feed/` uses temporary tables and views
-that disappear when the session ends, so what runs is always exactly what is in this repo.
+that disappear when the session ends, so what runs is always exactly what is in this repo. The
+feed connects to a dedicated, empty `sailpoint` database on each cluster, so even those
+temporary objects never touch `postgres` or `edb`.
 **Runs are independent**: if any cluster or AD lookup fails, nothing is published and the files
 already in the output folder stay as they are.
 
@@ -40,7 +42,7 @@ already in the output folder stay as they are.
 ```
 config/central.env.example    settings for the central server (copy to central.env; never commit it)
 config/sources.conf.example   one line per cluster (copy to sources.conf; never commit it)
-sql/setup/01_create_feed_account.sql   one-time DBA setup on each cluster: the feed login account
+sql/setup/01_setup_cluster.sql   one-time DBA setup on each cluster: feed account + empty sailpoint database
 sql/feed/00_prepare.sql       session checks + temporary table for AD data
 sql/feed/10_base.sql          ALL shared rules: pg_hba classification, privileges, status, prefix
 sql/feed/15_ldap_logins.sql   AD settings of each AD login's pg_hba.conf line
@@ -58,23 +60,29 @@ old/                          earlier versions, kept for reference only (not use
 
 ## Cluster setup (DBA, one time per cluster)
 
-### 1. Create the feed account
+### 1. Create the feed account and the `sailpoint` database
 
 ```bash
-psql -h <host> -p 5444 -U enterprisedb -d postgres -f sql/setup/01_create_feed_account.sql
-# other name:  psql ... -v feed_user=svc_sailpoint -f sql/setup/01_create_feed_account.sql
+psql -h <host> -p 5444 -U enterprisedb -d postgres -f sql/setup/01_setup_cluster.sql
+# other name:  psql ... -v feed_user=svc_sailpoint -f sql/setup/01_setup_cluster.sql
 ```
 
-This creates the login `sailpoint_feed` (password asked interactively) with the rights to read
-`pg_hba_file_rules` (including the LDAP bind settings) and `sys.dba_users`. Its last query must
-return `sys | dba_users`; if it returns nothing, the EPAS Oracle-compatibility views are missing
-in the `postgres` database (`SHOW db_dialect;`) and the feed cannot run there.
+(It connects to `postgres` only to issue `CREATE DATABASE`; nothing is created there.)
+
+| Object | Name | Notes |
+|---|---|---|
+| Login role | `sailpoint_feed` | password asked interactively; rights to read `pg_hba_file_rules` (including the LDAP bind settings) and `sys.dba_users` |
+| Database | `sailpoint` | empty; owned by the feed account; `PUBLIC` has no access, so only the feed account (and superusers) can connect |
+
+Its last query must return `sys | dba_users`; if it returns nothing, the EPAS
+Oracle-compatibility views are missing in the new database (`SHOW db_dialect;`) and the feed
+cannot run there.
 
 ### 2. Allow the central server in `pg_hba.conf`
 
 ```
 # TYPE   DATABASE  USER            ADDRESS                  METHOD
-hostssl  postgres  sailpoint_feed  <central-server-ip>/32   scram-sha-256
+hostssl  sailpoint  sailpoint_feed  <central-server-ip>/32   scram-sha-256
 ```
 
 - Put it **above** any LDAP line and any `all` line: `pg_hba.conf` uses the first match.
@@ -100,7 +108,7 @@ vi config/central.env          # OU names, output folder, email ...
 vi config/sources.conf         # one line per cluster
 
 # One ~/.pgpass line per cluster (no AD passwords needed here: they come from pg_hba.conf)
-echo 'pgprd01.example.com:5444:postgres:sailpoint_feed:<password>' >> ~/.pgpass
+echo 'pgprd01.example.com:5444:sailpoint:sailpoint_feed:<password>' >> ~/.pgpass
 chmod 600 ~/.pgpass
 
 sudo mkdir -p /var/lib/edb-sailpoint-feeds && sudo chown "$USER" /var/lib/edb-sailpoint-feeds

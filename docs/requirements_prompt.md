@@ -45,7 +45,8 @@ login is on LDAP lines with different OUs.
 **Decisions already made**
 - Central multi-cluster design only; one cluster = one line in `sources.conf`.
 - Logic only in SQL files sent each run, using **temporary** tables and views: nothing is
-  stored in the clusters and there is no deploy step. Connect to the `postgres` database.
+  stored in the clusters and there is no deploy step. Connect to a dedicated, empty `sailpoint`
+  database (created by the setup script), never `postgres` or `edb`.
 - AD lookup per cluster's `pg_hba.conf` settings (read from `pg_hba_file_rules`, including the
   bind password, which is never stored, logged or passed on a command line); one lookup per
   distinct AD profile. Fill first/last name for AD accounts; owner (manager) and cost centre
@@ -57,8 +58,8 @@ login is on LDAP lines with different OUs.
   published left as they are, exit 2. No comparison with earlier runs.
 - Reporting: log, exit code 0/2, `status.json`, optional email. Run logs and archived copies of
   published files kept 90 days, never read by a run.
-- Feed account created by a one-time setup script (name configurable), superuser or
-  least-privilege grants; `hostssl` line for the central server.
+- One-time setup script per cluster (feed account name configurable): feed account, superuser
+  or least-privilege grants, and the empty `sailpoint` database; `hostssl` line for the central server.
 - Linux line endings (`.gitattributes`); optional ShellCheck check via GitHub Actions.
 
 **Still unknown**

@@ -5,7 +5,7 @@ Why the feeds work the way they do. Setup and operations are in the [README](../
 ## Shape
 
 ```
-central server (cron)                                   each EPAS cluster (database "postgres")
+central server (cron)                                   each EPAS cluster (database "sailpoint")
 ---------------------                                   ---------------------------------------
 pass 1, per cluster ───────────── psql ───────────────▶ classify logins from pg_hba_file_rules,
                                                         check, return each AD login's LDAP settings
@@ -22,7 +22,7 @@ combine (header once) and publish atomically
 | Modes | Central multi-cluster only; one cluster = one line | one code path to maintain |
 | Where the logic lives | SQL files in `sql/feed/`, sent each run; temporary objects only | no deploy step, nothing stored in clusters, no drift between repo and database |
 | Shared rules | all in `10_base.sql` (temporary view `role_base`) | each rule defined once |
-| Database connected to | `postgres` | catalogs are cluster-wide; nothing is created there |
+| Database connected to | dedicated, empty `sailpoint` database | catalogs are cluster-wide, so any database works; a dedicated one keeps even the run's temporary objects out of `postgres` and `edb`, and lets the feed account be the only one allowed in |
 | Local vs AD | the `pg_hba.conf` line that applies to the login | it is what Postgres itself uses |
 | Person vs non-person | OU in that line's `ldapbasedn` (`OU=Person ID` / `OU=Non Person Id`) | the AD branch Postgres searches defines the account kind; follows OU moves automatically |
 | AD connection | server, scheme/TLS, branch, bind DN, bind password, search attribute/filter read from that line | each cluster may use a different AD or branch; the lookup finds the same entry Postgres logs in as |

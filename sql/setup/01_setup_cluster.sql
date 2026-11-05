@@ -1,10 +1,14 @@
 -- One-time setup on EVERY cluster, run by a DBA as superuser with psql:
 --
---     psql -h <host> -p 5444 -U enterprisedb -d postgres -f sql/setup/01_create_feed_account.sql
---     psql ... -v feed_user=svc_sailpoint -f sql/setup/01_create_feed_account.sql   (other name)
+--     psql -h <host> -p 5444 -U enterprisedb -d postgres -f sql/setup/01_setup_cluster.sql
+--     psql ... -v feed_user=svc_sailpoint -f sql/setup/01_setup_cluster.sql   (other account name)
 --
--- Creates only the login account the central server connects with. The feed itself creates
--- nothing in the cluster: it uses temporary tables and views that vanish with its session.
+-- It connects to "postgres" only to issue CREATE DATABASE; nothing is created there.
+-- Creates:
+--   * the login account the central server connects with
+--   * an EMPTY database "sailpoint" that only this account may use. Each nightly session
+--     connects there, so its temporary tables and views never touch postgres or edb.
+--     Nothing permanent is ever created in it.
 -- Then add the pg_hba.conf line from README.md ("Cluster setup"). Needs psql 10 or later.
 
 \set ON_ERROR_STOP on
@@ -30,13 +34,21 @@ COMMENT ON ROLE :"feed_user" IS
 ALTER ROLE :"feed_user" SUPERUSER;
 
 --    Least-privilege alternative (test on a non-production cluster first): remove the
---    ALTER ROLE line above and uncomment these.
+--    ALTER ROLE line above and uncomment these, plus the GRANT in step 4.
 -- GRANT EXECUTE ON FUNCTION pg_catalog.pg_hba_file_rules() TO :"feed_user";
 -- GRANT SELECT  ON pg_catalog.pg_hba_file_rules           TO :"feed_user";
--- GRANT SELECT  ON sys.dba_users                          TO :"feed_user";
 
--- 3. Check the EPAS Oracle-compatibility view the feed needs is present in this database.
---    Expect one row: sys | dba_users. No rows = stop and investigate (see README).
+-- 3. The dedicated, empty database. Its owner (the feed account) can connect and create
+--    temporary objects; nobody else gets any access.
+CREATE DATABASE sailpoint OWNER :"feed_user";
+REVOKE ALL ON DATABASE sailpoint FROM PUBLIC;
+COMMENT ON DATABASE sailpoint IS
+    'Empty landing database for the nightly SailPoint feeds (temporary objects only). Repo edb-sailpoint-feeds.';
+
+-- 4. Check, inside the new database, that the EPAS Oracle-compatibility view the feed needs
+--    is present. Expect one row: sys | dba_users. No rows = stop and investigate (see README).
+\connect sailpoint
+-- GRANT SELECT ON sys.dba_users TO :"feed_user";     -- least-privilege alternative only
 SELECT n.nspname AS schema, c.relname AS view
 FROM pg_class c
 JOIN pg_namespace n ON n.oid = c.relnamespace
