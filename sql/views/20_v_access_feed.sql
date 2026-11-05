@@ -1,12 +1,16 @@
 -- Access feed (12 columns): one row per role that cannot log in (entitlements).
--- Same output as sql/access_feed.sql. Query with an ORDER BY, e.g.:
+-- Single mode: same output as sql/access_feed.sql.
+-- Multi-source mode (source code set): "id" becomes CODE:rolname and "displayName" shows
+-- the source, e.g. "app_read (PRD01)".
+-- Query with an ORDER BY, e.g.:
 --     SELECT * FROM sailpoint.v_access_feed ORDER BY "id";
 
 CREATE VIEW sailpoint.v_access_feed AS
 SELECT
     'Role'::text                                  AS "type",              -- (1)
-    rolname::text                                 AS "id",                -- (2)
-    rolname::text                                 AS "displayName",       -- (3)
+    id_prefix || rolname                          AS "id",                -- (2)
+    rolname || CASE WHEN source_code = '' THEN '' ELSE ' (' || source_code || ')' END
+                                                  AS "displayName",       -- (3)
     coalesce(role_comment, 'Database role ' || rolname)
                                                   AS "description",       -- (4)
     NULL::text                                    AS "owner",             -- (5) enrichment

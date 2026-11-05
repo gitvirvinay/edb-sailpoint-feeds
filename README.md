@@ -7,30 +7,49 @@ Nightly CSV feeds from EDB Postgres Advanced Server (EPAS) for SailPoint user an
 | Access | `access_feed.csv` | Role that cannot log in (entitlement) | 12 |
 | Account | `account_feed.csv` | Login account (or account × role, see below) | 18 |
 
+## Pick a mode
+
+| Mode | Use when | Runs on | Guide |
+|---|---|---|---|
+| **Single database** | one EPAS cluster | that cluster's server | [docs/single_database.md](docs/single_database.md) |
+| **Multi-source** | several clusters, one combined Access file and one combined Account file | a central server | [docs/multi_source.md](docs/multi_source.md) |
+
+Both modes share the SQL, the database setup below and the classification rules. In
+multi-source mode, IDs are prefixed with a source code (`PRD1:app_read`) and names, owner and
+cost centre are filled from AD. Single-database mode is unchanged by the multi-source files.
+
 ## Repository layout
 
 ```
-config/feeds.env.example   settings template (copy to feeds.env on the server; never commit feeds.env)
+config/feeds.env.example   single mode settings (copy to feeds.env; never commit it)
+config/central.env.example multi-source settings (copy to central.env; never commit it)
+config/sources.conf.example multi-source list of clusters (copy to sources.conf)
 sql/access_feed.sql        Access feed query
 sql/account_feed_option1_combined.sql   Account feed: one row per account, roles joined by '|'
 sql/account_feed_option2_rows.sql       Account feed: one row per account per role
 sql/setup/01_create_sailpoint_db.sql    one-time DBA setup: feed account, database, schema
-sql/views/                 the same feeds as database views (optional; see "Views")
-scripts/ad_npid_sync.sh    looks up DB logins in AD, stores non-person IDs in sailpoint.ad_npids
-scripts/run_feeds.sh       runs everything in order; call this from cron
-scripts/apply_views.sh     creates or refreshes the views in sql/views/
+sql/views/                 the same feeds as database views (used by multi-source mode)
+scripts/run_feeds.sh       single mode: runs everything in order; call this from cron
+scripts/ad_npid_sync.sh    single mode: stores the database's AD non-person IDs in sailpoint.ad_npids
+scripts/apply_views.sh     creates or refreshes the views in sql/views/ on one cluster
+scripts/check_views_match.sh  regression check: views = single-mode SQL files, byte for byte
+scripts/central/collect_all.sh     multi-source: the whole run; call this from cron
+scripts/central/ad_lookup.sh       multi-source: one AD lookup for all clusters
+scripts/central/apply_views_all.sh multi-source: apply the views on every cluster
+scripts/central/lib.sh             multi-source: shared helpers
+docs/single_database.md    single mode: server setup, cron, exit codes
+docs/multi_source.md       multi-source: design, source codes, failure rule, setup
 docs/field_mapping.md      SailPoint column specs and where each value comes from
 docs/requirements_prompt.md  the project requirements in one message (for AI assistants or new team members)
 .github/workflows/         optional ShellCheck check on pull requests
 .gitattributes             keeps Linux line endings for the scripts
 ```
 
-## How it works
+## How accounts are classified (both modes)
 
-1. `ad_npid_sync.sh` reads the database's login accounts, asks AD which of them are
-   non-person (service) accounts, and stores those names in `sailpoint.ad_npids`.
-2. `access_feed.sql` lists the roles that cannot log in (entitlements).
-3. The account feed lists login accounts, their status, privileges and roles, and classifies each one:
+The Access feed lists the roles that cannot log in (entitlements). The Account feed lists
+login accounts, their status, privileges and roles, and classifies each one. Whether an AD
+login is a non-person account comes from an AD lookup (OU or attribute, set in the config):
 
 | Account | type | subtype |
 |---|---|---|
@@ -66,7 +85,7 @@ This creates:
 |---|---|---|
 | Login role | `sailpoint_feed` | local password login; password set interactively |
 | Database | `sailpoint` | owned by `sailpoint_feed`; `CONNECT` revoked from `PUBLIC` |
-| Schema | `sailpoint` (in database `sailpoint`) | holds `sailpoint.ad_npids`, created by the sync script |
+| Schema | `sailpoint` (in database `sailpoint`) | holds the views and their tables (`ad_npids`, `ad_users`, `feed_settings`), created by the scripts |
 
 The last query in the script must return `sys | dba_users`. If it returns nothing, the EPAS
 Oracle-compatibility views are missing in that database; check with:
@@ -83,7 +102,8 @@ password (`scram-sha-256`) login to the `sailpoint` database.
 host      sailpoint  sailpoint_feed  127.0.0.1/32       scram-sha-256
 # ...or, if PGHOST is left empty (Unix socket):
 # local   sailpoint  sailpoint_feed                     scram-sha-256
-# ...or, scripts run on a separate server (use its IP; hostssl requires SSL on the cluster):
+# ...or, scripts run on a separate server, e.g. the multi-source central server
+# (use its IP; hostssl requires SSL on the cluster):
 # hostssl sailpoint  sailpoint_feed  10.20.30.40/32     scram-sha-256
 ```
 
@@ -103,44 +123,20 @@ WHERE 'sailpoint_feed' = ANY (user_name);   -- expect your line, with error empt
 Do **not** add `sailpoint_feed` to an LDAP group or LDAP line: the account feed classifies it
 as `Local DB Account` precisely because it authenticates locally.
 
-## Server setup (one time)
+## Server setup
 
-Requirements on the Linux server: `bash`, `psql` 12+, `ldapsearch`
-(`sudo dnf install openldap-clients` or `sudo apt install ldap-utils`).
-
-```bash
-git clone <repo-url> /opt/edb-sailpoint-feeds
-cd /opt/edb-sailpoint-feeds
-cp config/feeds.env.example config/feeds.env
-chmod 600 config/feeds.env
-vi config/feeds.env            # fill in DB, AD and output settings
-
-# Passwords - never in the repo
-echo 'db-host:5444:sailpoint:sailpoint_feed:<password>' >> ~/.pgpass && chmod 600 ~/.pgpass
-printf '%s' '<ad-bind-password>' > ~/.ad_bind_pw && chmod 600 ~/.ad_bind_pw
-
-chmod +x scripts/*.sh
-scripts/run_feeds.sh           # test run
-```
-
-Schedule it (daily at 02:00):
-
-```
-0 2 * * * /opt/edb-sailpoint-feeds/scripts/run_feeds.sh >> /var/log/sailpoint_feeds.log 2>&1
-```
+See [docs/single_database.md](docs/single_database.md) or [docs/multi_source.md](docs/multi_source.md).
 
 The `sailpoint_feed` account needs superuser or equivalent rights, because `pg_hba_file_rules`
 and `sys.dba_users` are restricted views. The setup script grants superuser; a commented
 least-privilege alternative is included in it.
 
-If `run_feeds.sh` exits with code 3, `sys.dba_users` was not found in the `sailpoint`
-database (see "Database setup" step 1).
-
-## Views (optional, for checks and future use)
+## Views
 
 The same feed logic is also available as database views in the `sailpoint` schema.
-`run_feeds.sh` does **not** use them yet; it still runs the files in `sql/`. The views return
-exactly the same rows, so DBAs and auditors can query the feeds directly.
+Multi-source mode extracts from them; single mode (`run_feeds.sh`) still runs the files in
+`sql/`. Without a source code and AD data (always the case in single mode) the views return
+exactly the same rows as those files, and DBAs and auditors can query them directly.
 
 | View | Contents |
 |---|---|
@@ -156,7 +152,7 @@ scripts/apply_views.sh
 ```
 
 Run it once after the database setup, and again on every cluster whenever a file in
-`sql/views/` changes. The repo is the source of truth: never edit the views directly in the
+`sql/views/` changes (`scripts/central/apply_views_all.sh` does all clusters at once). The repo is the source of truth: never edit the views directly in the
 database. Grants for a read-only role go in `sql/views/90_grants.sql`, because recreating the
 views removes existing grants.
 
@@ -170,21 +166,38 @@ SELECT "id", length("access") FROM sailpoint.v_account_feed_combined WHERE lengt
 Views have no guaranteed row order, so always add `ORDER BY`. Keep `sql/views/` and the
 feed files in `sql/` in step: a rule changed in one must be changed in the other.
 
+### Regression check
+
+After changing anything in `sql/` or `sql/views/`, prove single mode is unaffected, on a
+test cluster:
+
+```bash
+FEEDS_ENV=config/feeds.env scripts/check_views_match.sh    # expect MATCH three times
+```
+
+It compares the single-mode SQL files with the views byte for byte, inside a transaction that
+is rolled back, so it changes nothing in the database.
+
 ## Open items before go-live
 
 - [ ] **Account feed layout**: ask SailPoint whether they want one row per account (option 1)
-      or one row per account × role (option 2). Set `ACCOUNT_FEED_SQL` in `feeds.env`,
-      then delete the unused SQL file from the repo.
+      or one row per account × role (option 2). Single mode: `ACCOUNT_FEED_SQL` in
+      `feeds.env`; multi-source: `ACCOUNT_LAYOUT` in `central.env`.
+- [ ] **Multi-source ID format**: confirm `CODE:name` with SailPoint, and choose the source
+      codes (4 characters or fewer, see docs/multi_source.md).
 - [ ] **AD criteria**: ask the AD team how non-person accounts are identified (OU or attribute)
-      and set `SEARCH_BASE` / `FILTER`.
+      and set `SEARCH_BASE` / `FILTER` (multi-source: `NPID_SEARCH_BASE` / `NPID_FILTER`).
 - [ ] **Spelling**: confirm type/subtype values against the customer's ID types definition document.
 - [ ] **Login name match**: the AD lookup assumes DB login name = AD `sAMAccountName`.
 - [ ] **Option 1 only**: run the 450-character check at the end of the SQL file.
-- [ ] **id length**: spec allows 32 characters; Postgres role names can be up to 63.
+- [ ] **id length**: spec allows 32 characters; Postgres role names can be up to 63
+      (multi-source mode refuses to publish longer IDs).
 - [ ] After the first run, review `Personal ID` rows for service accounts the AD filter missed.
 
 ## Making changes
 
 Work on a branch, open a pull request, and have a DBA review SQL changes before merging to `main`.
-Tag each production release (`v1.0`, `v1.1`, ...) so you can tell which version produced a feed.
+Run the regression check above for any SQL change. Tag each production release (`v1.0`,
+`v1.1`, ...) so you can tell which version produced a feed; `v1.0-single` marks the last
+version before multi-source mode was added.
 To update the server: `cd /opt/edb-sailpoint-feeds && git pull` (or `git checkout <tag>`).

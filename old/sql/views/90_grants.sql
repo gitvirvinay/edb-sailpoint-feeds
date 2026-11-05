@@ -1,0 +1,14 @@
+-- Optional: let a read-only role (auditors, DBAs, a future SailPoint JDBC connector) query
+-- the feed views. Grants are lost whenever the views are recreated, so they live here and
+-- are re-applied on every run of scripts/apply_views.sh.
+--
+-- Note: pg_hba_file_rules checks the permissions of the user running the query, so a
+-- non-superuser reader may also need:
+--     GRANT EXECUTE ON FUNCTION pg_catalog.pg_hba_file_rules() TO <role>;
+--     GRANT SELECT  ON pg_catalog.pg_hba_file_rules           TO <role>;
+-- Test with the reader role before relying on it.
+
+-- GRANT USAGE  ON SCHEMA sailpoint TO sailpoint_reader;
+-- GRANT SELECT ON sailpoint.v_access_feed,
+--                 sailpoint.v_account_feed_rows,
+--                 sailpoint.v_account_feed_combined TO sailpoint_reader;

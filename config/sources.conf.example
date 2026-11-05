@@ -1,0 +1,19 @@
+# EPAS clusters read by MULTI-SOURCE mode (scripts/central/*).
+# Copy to config/sources.conf on the central server (it is in .gitignore).
+#
+# One cluster per line, fields separated by spaces:
+#   CODE   HOST   PORT   DATABASE   [USER]
+#
+# CODE      3-5 characters, A-Z and 0-9 (e.g. PRD01). It becomes the ID prefix in the
+#           feeds ("PRD01:app_read"). NEVER change a code once it is live: SailPoint would
+#           see every account of that cluster as removed and re-added.
+# DATABASE  the cluster's "sailpoint" database (see sql/setup).
+# USER      optional; defaults to PGUSER in central.env.
+#
+# Each cluster needs the one-time setup (sql/setup), a pg_hba.conf line for the
+# central server, a ~/.pgpass line, and the views (scripts/central/apply_views_all.sh).
+
+# CODE   HOST                    PORT   DATABASE    USER
+PRD01    pgprd01.example.com     5444   sailpoint
+PRD02    pgprd02.example.com     5444   sailpoint
+# UAT01  pguat01.example.com     5444   sailpoint   sailpoint_feed_uat

@@ -2,7 +2,10 @@
 -- Holds the logic shared by every feed, so each rule is defined in ONE place:
 --   * is_privileged       the "privileged role" rule (Access isPrivileged / Account isPrivilegedFlag)
 --   * is_ldap             does pg_hba.conf send this login to LDAP/AD?
---   * is_ad_npid          did the AD lookup (ad_npid_sync.sh) mark it as a non-person ID?
+--   * is_ad_npid          did the AD lookup mark it as a non-person ID? (single mode:
+--                         sailpoint.ad_npids; multi-source mode: sailpoint.ad_users)
+--   * source_code / id_prefix   multi-source mode only: 'PRD01' and 'PRD01:'; empty otherwise
+--   * first_name ... ad_cost_centre   AD attributes, multi-source mode only (NULL otherwise)
 --   * account_type / account_subtype   the classification used by the account feed
 --   * status, is_locked, disabled_at   account state from EPAS sys.dba_users
 -- Feed views (20_..., 30_..., 31_...) only rename and format these columns.
@@ -56,15 +59,26 @@ roles AS (
     LEFT JOIN sys.dba_users u
            ON upper(u.username) = upper(r.rolname)           -- sys. prefix: independent of search_path; names stored upper-case
 ),
+settings AS (
+    -- Source code for multi-source mode; empty string when not set (single mode).
+    SELECT coalesce((SELECT value FROM sailpoint.feed_settings WHERE setting = 'source_code'), '')
+               AS source_code
+),
 classified AS (
     SELECT
         roles.*,
+        ad.first_name,
+        ad.last_name,
+        ad.owner                                             AS ad_owner,
+        ad.cost_centre                                       AS ad_cost_centre,
         (roles.is_ldap
-         AND lower(roles.rolname) IN (SELECT rolname FROM sailpoint.ad_npids)) AS is_ad_npid,
+         AND (   lower(roles.rolname) IN (SELECT rolname FROM sailpoint.ad_npids)
+              OR coalesce(ad.is_npid, false)))               AS is_ad_npid,
         (roles.account_status ILIKE '%LOCKED%')              AS is_locked_raw,
         (roles.account_status ILIKE 'EXPIRED%'
          OR roles.rolvaliduntil < now())                     AS is_expired
     FROM roles
+    LEFT JOIN sailpoint.ad_users ad ON ad.rolname = lower(roles.rolname)
 )
 SELECT
     oid,
@@ -100,8 +114,17 @@ SELECT
     CASE WHEN coalesce(is_locked_raw, false)        THEN lock_date
          WHEN account_status ILIKE 'EXPIRED%'       THEN expiry_date
          WHEN rolvaliduntil < now()                 THEN rolvaliduntil
-    END                                                      AS disabled_at
-FROM classified;
+    END                                                      AS disabled_at,
+    -- Added for multi-source mode (always at the end, so existing columns keep their order).
+    settings.source_code,
+    CASE WHEN settings.source_code = '' THEN '' ELSE settings.source_code || ':' END
+                                                             AS id_prefix,
+    first_name,
+    last_name,
+    ad_owner,
+    ad_cost_centre
+FROM classified
+CROSS JOIN settings;
 
 COMMENT ON VIEW sailpoint.v_role_base IS
     'Shared logic for the SailPoint feeds (repo edb-sailpoint-feeds, sql/views). Do not edit in the database; change the repo and run scripts/apply_views.sh.';

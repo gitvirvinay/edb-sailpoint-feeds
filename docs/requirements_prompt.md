@@ -48,10 +48,30 @@ Server (EPAS)**, used for user and role attestation. Deliver a GitHub-ready repo
 - The same feed logic also as optional database views (`sailpoint` schema), applied by an
   idempotent script in one transaction; the cron job keeps using the SQL files for now.
 
+**Multi-source mode (several clusters, one combined file per feed)**
+- All sources are EPAS clusters. A central Linux server pulls from each with `psql` (it can
+  reach the database ports); no database on the central server.
+- One AD lookup for all clusters' logins; each cluster's rows are loaded into that cluster's
+  `sailpoint.ad_users`, and each cluster joins its own data in the shared views.
+- IDs: `CODE:name` in `id` and `access`; `displayName`/`name` show `name (CODE)`;
+  `accountCorrelationValue` never prefixed. Codes 3-5 characters A-Z/0-9 (4 or fewer while
+  built-in `pg_*` roles are included), never changed once live; refuse to publish IDs over 32.
+- AD fills first/last name for all accounts; owner (manager) and cost centre (department)
+  for non-person accounts only.
+- Tolerant failure rule: reuse a cluster's (or AD's) last good extract for up to 48 hours,
+  then fail and leave the published files untouched. Never reuse an extract made with the
+  other account layout.
+- Reporting: log, exit codes 0 (fresh) / 1 (published with reused data) / 2 (failed),
+  a status JSON file, optional email.
+- Single-database mode stays as it was (tagged `v1.0-single`); multi-source mode is added in
+  new files, and a regression check proves the views equal the single-mode SQL files.
+
 **Still unknown (waiting on other teams)**
 - SailPoint: one row per account (roles joined in `access`, which delimiter?) or one row per
   account x role? What should `access` be for an account with no roles?
 - Exact type/subtype spelling from the customer's ID types definition document.
+- SailPoint confirming the `CODE:name` ID format; the list of clusters and their codes;
+  whether the central server can send email.
 - AD team: how non-person accounts are identified (dedicated OU or an attribute such as `employeeType`).
 
 **End product**

@@ -1,6 +1,8 @@
 -- Account feed (18 columns), OPTION 1: one row per login account; "access" lists all its
 -- roles joined by '|'. Built on the option 2 view, so both layouts always agree.
--- Same output as sql/account_feed_option1_combined.sql. Query with an ORDER BY, e.g.:
+-- Single mode: same output as sql/account_feed_option1_combined.sql.
+-- Multi-source mode: prefixes and AD attributes as in v_account_feed_rows.
+-- Query with an ORDER BY, e.g.:
 --     SELECT * FROM sailpoint.v_account_feed_combined ORDER BY "id";
 -- Check the 450-character limit for "access":
 --     SELECT "id", length("access") FROM sailpoint.v_account_feed_combined WHERE length("access") > 450;

@@ -47,3 +47,19 @@ One row per login account (option 1) or per login account × role (option 2).
 | 18 | access | Y | nvarchar(450) | Role or entitlement; foreign key to Access feed | role name(s) matching Access feed `id` |
 
 Dates are formatted `YYYY-MM-DDTHH:MI:SS`. Booleans are `TRUE` / `FALSE`.
+
+## Multi-source mode differences
+
+In multi-source mode (see `docs/multi_source.md`) a few columns change; all others are the same.
+
+| Feed | Column | Multi-source value |
+|---|---|---|
+| Access | `id` | `CODE:rolname`, e.g. `PRD1:app_read` |
+| Access | `displayName` | `rolname (CODE)`, e.g. `app_read (PRD1)` |
+| Account | `name` | `rolname (CODE)` |
+| Account | `id` | `CODE:rolname` |
+| Account | `accountCorrelationValue` | `rolname`, never prefixed (links the account to a person) |
+| Account | `userFirstName` / `userLastName` | AD `givenName` / `sn` (configurable) |
+| Account | `primaryOwner` | non-person accounts only: name of the AD `manager` |
+| Account | `costCentre` | non-person accounts only: AD `department` (configurable) |
+| Account | `access` | `CODE:rolname`, matching the Access feed `id` |
