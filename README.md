@@ -95,6 +95,20 @@ The feed account is itself a local account, so it appears in the Account feed as
 `Local DB Account` with `isPrivilegedFlag` = TRUE (superuser). That is correct: it is a
 privileged service account and should be attested like any other.
 
+### 3. Set `cluster_name` to the cluster's code
+
+Every run checks that each cluster really is the one `sources.conf` says it is: the cluster's
+`cluster_name` must equal its code (case does not matter). This stops a wrong host or port in
+`sources.conf` from publishing one cluster's accounts under another cluster's code.
+
+```
+# postgresql.conf (or a file in conf.d), then restart the cluster
+cluster_name = 'PRD1'
+```
+
+Check with `SHOW cluster_name;`. `cluster_name` also appears in `ps` output and can be used in
+`log_line_prefix`; if another tool already uses it with a different value, settle on one value first.
+
 ## Central server setup (one time)
 
 Requirements: `bash`, `psql` 12+, `ldapsearch` (`openldap-clients` / `ldap-utils`), `flock`, `gzip`.
@@ -148,6 +162,8 @@ Exit code 0 = both files published; 2 = nothing published (previous files untouc
 | `IDs longer than 32 characters` | shorten the cluster code (or the role name) |
 | `Invalid credentials (49)` from an AD profile | the `ldapbindpasswd` on those `pg_hba.conf` lines is wrong or expired |
 | `view sys.dba_users not found` | the database has no EPAS Oracle-compatibility views |
+| `cluster_name is not set on this cluster` | set `cluster_name = 'CODE'` in postgresql.conf and restart |
+| `cluster_name is X but sources.conf expects Y` | that `sources.conf` line points to the wrong host or port, or the cluster's `cluster_name` is wrong |
 
 ## Open items
 
