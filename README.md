@@ -111,27 +111,109 @@ Check with `SHOW cluster_name;`. `cluster_name` also appears in `ps` output and 
 
 ## Central server setup (one time)
 
-Requirements: `bash`, `psql` 12+, `ldapsearch` (`openldap-clients` / `ldap-utils`), `flock`, `gzip`.
+The central server is the Linux machine that runs the feed every night. Set it up once; adding
+a cluster later is one line in `sources.conf` and one line in `~/.pgpass`.
+
+### 1. A dedicated OS account
+
+Run the feed as a service account (e.g. `sailfeed`), not `root` and not a personal login: the
+cluster passwords live in its `~/.pgpass`, and cron runs as this account.
 
 ```bash
-git clone <repo-url> /opt/edb-sailpoint-feeds
-cd /opt/edb-sailpoint-feeds
-cp config/central.env.example  config/central.env && chmod 600 config/central.env
-cp config/sources.conf.example config/sources.conf
-vi config/central.env          # OU names, output folder, email ...
-vi config/sources.conf         # one line per cluster
-
-# One ~/.pgpass line per cluster (no AD passwords needed here: they come from pg_hba.conf)
-echo 'pgprd01.example.com:5444:sailpoint:sailpoint_feed:<password>' >> ~/.pgpass
-chmod 600 ~/.pgpass
-
-sudo mkdir -p /var/lib/edb-sailpoint-feeds && sudo chown "$USER" /var/lib/edb-sailpoint-feeds
-chmod +x scripts/*.sh
-scripts/collect_all.sh                         # test run
-cat /var/lib/edb-sailpoint-feeds/status.json
+sudo useradd -m sailfeed       # or ask the Linux team for a service account
+sudo -iu sailfeed              # do the rest as this user
 ```
 
-If the AD servers use certificates from an internal CA, set `LDAPTLS_CACERT` in `central.env`.
+### 2. Tools
+
+```bash
+psql --version          # 12 or later
+ldapsearch -VV          # openldap-clients (RHEL) / ldap-utils (Debian, Ubuntu)
+which flock gzip mail   # mail only for email alerts
+```
+
+### 3. The repository
+
+```bash
+sudo mkdir -p /opt/edb-sailpoint-feeds && sudo chown sailfeed /opt/edb-sailpoint-feeds
+git clone <repo-url> /opt/edb-sailpoint-feeds
+cd /opt/edb-sailpoint-feeds
+chmod +x scripts/*.sh
+```
+
+No GitHub access from the server? Copy the folder with `scp`; it works the same.
+
+### 4. `config/central.env`
+
+```bash
+cp config/central.env.example config/central.env && chmod 600 config/central.env
+vi config/central.env
+```
+
+| Setting | What to put |
+|---|---|
+| `PERSON_OU` / `NONPERSON_OU` | the OU names exactly as written in the `ldapbasedn` of your `pg_hba.conf` lines |
+| `OUTPUT_DIR` | the folder SailPoint picks the files up from (ask the SailPoint team) |
+| `LDAPTLS_CACERT` | uncomment if the AD lines use `ldaps://` or `ldaptls=1` with certificates from an internal CA |
+| `MAIL_TO` | team address for alerts on failed runs; empty = no email |
+
+No passwords go in this file, and it is in `.gitignore`.
+
+### 5. `config/sources.conf`
+
+```bash
+cp config/sources.conf.example config/sources.conf
+vi config/sources.conf
+```
+
+```
+# CODE   HOST                    PORT
+PRD1     pgprd01.example.com     5444
+```
+
+- CODE must equal the cluster's `cluster_name` (cluster setup, step 3).
+- Write HOST the same way here and in `~/.pgpass`: `pgprd01` and `pgprd01.example.com` are
+  different hosts to psql.
+
+### 6. `~/.pgpass`: one line per cluster
+
+No AD passwords are needed here: they come from `pg_hba.conf` at run time.
+
+```bash
+echo 'pgprd01.example.com:5444:sailpoint:sailpoint_feed:<password>' >> ~/.pgpass
+chmod 600 ~/.pgpass            # psql ignores the file if it is readable by others
+history -d $(history 1)        # remove that line (with the password) from shell history
+```
+
+Format: `host:port:database:user:password`.
+
+### 7. State folder (run logs and archive)
+
+```bash
+sudo mkdir -p /var/lib/edb-sailpoint-feeds && sudo chown sailfeed /var/lib/edb-sailpoint-feeds
+```
+
+### 8. Checks before the first run (as `sailfeed`)
+
+```bash
+# Cluster login without a password prompt (-w): proves the .pgpass line matches. Prints the code.
+psql -w "host=pgprd01.example.com port=5444 dbname=sailpoint user=sailpoint_feed sslmode=require" \
+     -c "SHOW cluster_name;"
+
+# AD server reachable (a server from ldapserver=... in pg_hba.conf). Prints namingContexts lines.
+ldapsearch -x -H ldap://<ad-server>:389 -b "" -s base namingContexts | head
+#   ldaps:  -H ldaps://<ad-server>:636
+```
+
+A password prompt or login error means the `.pgpass` line does not match host, port, database
+and user exactly. A timeout on `ldapsearch` means a firewall between the central server and AD.
+
+### 9. Test run
+
+```bash
+scripts/collect_all.sh; echo "exit code: $?"
+cat /var/lib/edb-sailpoint-feeds/status.json
+```
 
 Schedule it (daily at 01:30):
 
