@@ -23,6 +23,7 @@ combine (header once) and publish atomically
 | Where the logic lives | SQL files in `sql/feed/`, sent each run; temporary objects only | no deploy step, nothing stored in clusters, no drift between repo and database |
 | Shared rules | all in `10_base.sql` (temporary view `role_base`) | each rule defined once |
 | Database connected to | dedicated, empty `sailpoint` database | catalogs are cluster-wide, so any database works; a dedicated one keeps even the run's temporary objects out of `postgres` and `edb`, and lets the feed account be the only one allowed in |
+| Right cluster? | each run checks the cluster's `cluster_name` equals its code in `sources.conf`, else the cluster fails | the code is kept in one place (`sources.conf`); the check catches a wrong host or port, which would otherwise publish one cluster's accounts under another's code |
 | Local vs AD | the `pg_hba.conf` line that applies to the login | it is what Postgres itself uses |
 | Person vs non-person | OU in that line's `ldapbasedn` (`OU=Person ID` / `OU=Non Person Id`) | the AD branch Postgres searches defines the account kind; follows OU moves automatically |
 | AD connection | server, scheme/TLS, branch, bind DN, bind password, search attribute/filter read from that line | each cluster may use a different AD or branch; the lookup finds the same entry Postgres logs in as |

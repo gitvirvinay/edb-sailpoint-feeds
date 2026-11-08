@@ -7,6 +7,7 @@
 # CODE      3-5 characters, A-Z and 0-9; use 4 or fewer (see README, "Source codes").
 #           It becomes the ID prefix ("PRD1:app_read"). NEVER change a code once it is live:
 #           SailPoint would see every account of that cluster as removed and re-added.
+#           The cluster's cluster_name (postgresql.conf) must equal this code; every run checks it.
 # DATABASE  optional; defaults to PGDATABASE in central.env (sailpoint).
 # USER      optional; defaults to PGUSER in central.env.
 #
