@@ -65,18 +65,22 @@ old/                          earlier versions, kept for reference only (not use
 ```bash
 psql -h <host> -p 5444 -U enterprisedb -d postgres -f sql/setup/01_setup_cluster.sql
 # other name:  psql ... -v feed_user=svc_sailpoint -f sql/setup/01_setup_cluster.sql
+# superuser:   psql ... -v superuser=on            -f sql/setup/01_setup_cluster.sql
 ```
 
 (It connects to `postgres` only to issue `CREATE DATABASE`; nothing is created there.)
 
 | Object | Name | Notes |
 |---|---|---|
-| Login role | `sailpoint_feed` | password asked interactively; rights to read `pg_hba_file_rules` (including the LDAP bind settings) and `sys.dba_users` |
+| Login role | `sailpoint_feed` | password asked interactively; **not** superuser by default: it gets read rights on `pg_hba_file_rules` (including the LDAP bind settings) and `sys.dba_users`, granted inside `sailpoint` (grants on these views apply only in the database they are made in) |
 | Database | `sailpoint` | empty; owned by the feed account; `PUBLIC` has no access, so only the feed account (and superusers) can connect |
 
-Its last query must return `sys | dba_users`; if it returns nothing, the EPAS
-Oracle-compatibility views are missing in the new database (`SHOW db_dialect;`) and the feed
-cannot run there.
+It ends with `Setup complete for sailpoint_feed in database sailpoint.` If it stops with
+`sys.dba_users not found`, the EPAS Oracle-compatibility views are missing in the new database
+(`SHOW db_dialect;`) and the feed cannot run there.
+
+The script cannot be run twice. To start over after a failed run:
+`DROP DATABASE IF EXISTS sailpoint; DROP ROLE IF EXISTS sailpoint_feed;`
 
 ### 2. Allow the central server in `pg_hba.conf`
 
@@ -92,8 +96,9 @@ hostssl  sailpoint  sailpoint_feed  <central-server-ip>/32   scram-sha-256
   `SELECT line_number, address, auth_method, error FROM pg_hba_file_rules WHERE 'sailpoint_feed' = ANY (user_name);`
 
 The feed account is itself a local account, so it appears in the Account feed as
-`Local DB Account` with `isPrivilegedFlag` = TRUE (superuser). That is correct: it is a
-privileged service account and should be attested like any other.
+`Local DB Account`, with `isPrivilegedFlag` = FALSE (TRUE if set up with `-v superuser=on`).
+It can still read the AD bind passwords in `pg_hba.conf`, so attest it as a sensitive
+service account like any other.
 
 ### 3. Set `cluster_name` to the cluster's code
 
@@ -215,11 +220,42 @@ scripts/collect_all.sh; echo "exit code: $?"
 cat /var/lib/edb-sailpoint-feeds/status.json
 ```
 
-Schedule it (daily at 01:30):
+### 10. Schedule it with cron (daily at 01:30)
+
+Cron runs jobs with a short PATH (`/usr/bin:/bin`), so add the folder that holds EDB's `psql`
+(`which psql`) or the job fails with `psql: command not found`. Create the log file once as root:
+
+```bash
+sudo touch /var/log/sailpoint_feeds.log && sudo chown sailfeed /var/log/sailpoint_feeds.log
+```
+
+Then, as `sailfeed`, `crontab -e`:
 
 ```
+PATH=/usr/edb/as16/bin:/usr/local/bin:/usr/bin:/bin
 30 1 * * * /opt/edb-sailpoint-feeds/scripts/collect_all.sh >> /var/log/sailpoint_feeds.log 2>&1
 ```
+
+Agree the time with the SailPoint team: the run must finish before they pick the files up.
+To test, set the time a few minutes ahead, check `tail /var/log/sailpoint_feeds.log` ends with
+`done: OK (exit 0)`, then set it back. Two runs never overlap (the script holds a lock).
+
+Rotate the log (as root, `/etc/logrotate.d/sailpoint_feeds`); the detailed logs are in
+`runs/` and are deleted after `KEEP_DAYS` anyway:
+
+```
+/var/log/sailpoint_feeds.log {
+    monthly
+    rotate 12
+    compress
+    missingok
+    notifempty
+}
+```
+
+Email (`MAIL_TO`) only reports runs that fail, not runs that never started. Have monitoring alert
+when `status.json` is older than about 26 hours:
+`find /var/lib/edb-sailpoint-feeds/status.json -mmin +1560` prints the file name if it is too old.
 
 ## Source codes
 
@@ -252,7 +288,7 @@ Exit code 0 = both files published; 2 = nothing published (previous files untouc
 - [ ] SailPoint: confirm the `CODE:name` ID format and the rows layout of the Account file.
 - [ ] Type/subtype spelling against the customer's ID types definition document.
 - [ ] AD failure handling: today any AD failure stops the run (to revisit).
-- [ ] Optional: test the least-privilege feed account (commented in the setup script).
+- [x] Least-privilege feed account: now the default in the setup script (`-v superuser=on` for the old behaviour).
 
 ## Making changes
 

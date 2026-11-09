@@ -2,6 +2,7 @@
 --
 --     psql -h <host> -p 5444 -U enterprisedb -d postgres -f sql/setup/01_setup_cluster.sql
 --     psql ... -v feed_user=svc_sailpoint -f sql/setup/01_setup_cluster.sql   (other account name)
+--     psql ... -v superuser=on            -f sql/setup/01_setup_cluster.sql   (superuser instead of grants)
 --
 -- It connects to "postgres" only to issue CREATE DATABASE; nothing is created there.
 -- Creates:
@@ -9,7 +10,7 @@
 --   * an EMPTY database "sailpoint" that only this account may use. Each nightly session
 --     connects there, so its temporary tables and views never touch postgres or edb.
 --     Nothing permanent is ever created in it.
--- Then add the pg_hba.conf line from README.md ("Cluster setup"). Needs psql 10 or later.
+-- Then add the pg_hba.conf line and set cluster_name (README, "Cluster setup"). Needs psql 10 or later.
 
 \set ON_ERROR_STOP on
 
@@ -17,7 +18,11 @@
 \else
     \set feed_user sailpoint_feed
 \endif
-\echo 'Feed account:' :feed_user
+\if :{?superuser}
+\else
+    \set superuser off
+\endif
+\echo 'Feed account:' :feed_user '  superuser:' :superuser
 
 -- 1. Local password login (it must NOT be on an LDAP line in pg_hba.conf).
 CREATE ROLE :"feed_user" LOGIN;
@@ -30,13 +35,11 @@ COMMENT ON ROLE :"feed_user" IS
 
 -- 2. Rights. The feed reads pg_hba_file_rules (including the LDAP bind settings and
 --    password of each line, to look users up in the right AD) and sys.dba_users.
---    Simplest: superuser. The account then shows isPrivilegedFlag = TRUE in its own row.
-ALTER ROLE :"feed_user" SUPERUSER;
-
---    Least-privilege alternative (test on a non-production cluster first): remove the
---    ALTER ROLE line above and uncomment these, plus the GRANT in step 4.
--- GRANT EXECUTE ON FUNCTION pg_catalog.pg_hba_file_rules() TO :"feed_user";
--- GRANT SELECT  ON pg_catalog.pg_hba_file_rules           TO :"feed_user";
+--    Default: least privilege, with grants in step 4 below.
+--    -v superuser=on: superuser instead (the account then shows isPrivilegedFlag = TRUE).
+\if :superuser
+    ALTER ROLE :"feed_user" SUPERUSER;
+\endif
 
 -- 3. The dedicated, empty database. Its owner (the feed account) can connect and create
 --    temporary objects; nobody else gets any access.
@@ -45,11 +48,23 @@ REVOKE ALL ON DATABASE sailpoint FROM PUBLIC;
 COMMENT ON DATABASE sailpoint IS
     'Empty landing database for the nightly SailPoint feeds (temporary objects only). Repo edb-sailpoint-feeds.';
 
--- 4. Check, inside the new database, that the EPAS Oracle-compatibility view the feed needs
---    is present. Expect one row: sys | dba_users. No rows = stop and investigate (see README).
+-- 4. Inside the new database: check the EPAS Oracle-compatibility view the feed needs, then
+--    grant read access. The grants MUST be made here: pg_hba_file_rules and sys.dba_users
+--    exist separately in every database, and a grant only covers the copy in the database
+--    it is made in.
 \connect sailpoint
--- GRANT SELECT ON sys.dba_users TO :"feed_user";     -- least-privilege alternative only
-SELECT n.nspname AS schema, c.relname AS view
-FROM pg_class c
-JOIN pg_namespace n ON n.oid = c.relnamespace
-WHERE n.nspname = 'sys' AND c.relname = 'dba_users';
+DO $$ BEGIN
+    IF to_regclass('sys.dba_users') IS NULL THEN
+        RAISE EXCEPTION 'sys.dba_users not found in database sailpoint: EPAS Oracle-compatibility views missing (SHOW db_dialect;), the feed cannot run on this cluster';
+    END IF;
+END $$;
+
+\if :superuser
+\else
+    GRANT EXECUTE ON FUNCTION pg_catalog.pg_hba_file_rules() TO :"feed_user";
+    GRANT SELECT  ON pg_catalog.pg_hba_file_rules            TO :"feed_user";
+    GRANT USAGE   ON SCHEMA sys                              TO :"feed_user";   -- usually PUBLIC already
+    GRANT SELECT  ON sys.dba_users                           TO :"feed_user";
+\endif
+
+\echo 'Setup complete for' :feed_user 'in database sailpoint.'

@@ -70,7 +70,7 @@ database, the feed reports the first line by the rule above. Not expected in thi
 ## Security
 
 - The feed account must read `pg_hba_file_rules`, which shows the AD bind passwords: it is
-  superuser (or has the grants in the setup script). Connections use `hostssl` + `PGSSLMODE=require`.
+  has the grants in the setup script (or is superuser with `-v superuser=on`). Connections use `hostssl` + `PGSSLMODE=require`.
 - The central server holds the cluster passwords (`~/.pgpass`) and, during a run only, the AD
   bind passwords: restrict access to it and to the account running cron.
 - AD names and per-cluster extracts exist only in the private run folder (deleted on exit) and
