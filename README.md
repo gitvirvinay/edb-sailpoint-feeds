@@ -270,7 +270,37 @@ Each cluster's code in `sources.conf` becomes its ID prefix (`PRD1:app_read`).
 
 Exit code 0 = both files published; 2 = nothing published (previous files untouched).
 `status.json` lists each cluster and AD profile as `OK`, `FAILED` or `SKIPPED` with a message;
-`runs/<run id>/` under the state folder holds the logs. Common messages:
+`runs/<run id>/` under the state folder holds the logs.
+
+**A failed run leaves yesterday's files in place, and SailPoint may read them again without
+noticing.** Fix it the same day if possible and run again by hand; re-running is always safe
+(every run starts from scratch). Agree with the SailPoint team whether they check the file date.
+
+### How to work through it
+
+```bash
+cd /var/lib/edb-sailpoint-feeds
+cat status.json                       # 1. what FAILED? (SKIPPED = fine, only skipped)
+ls -t runs | head -1                  # 2. newest run folder
+less runs/<run_id>/<CODE>/pass1.log   # 3. full error (also pass2.log, ad/N.log)
+/opt/edb-sailpoint-feeds/scripts/collect_all.sh; echo $?   # 4. after the fix, as sailfeed: expect 0
+```
+
+### Common messages
+
+Connection to a cluster:
+
+| Message contains | Fix |
+|---|---|
+| `timeout expired` / `Connection refused` | cluster down, wrong host/port or firewall: `pg_isready -h <host> -p 5444` |
+| `password authentication failed` | the password in `~/.pgpass` no longer matches: update that line |
+| `no pg_hba.conf entry for host` | the feed's `pg_hba.conf` line is missing, below an LDAP/`all` line, or the central server's IP changed |
+| `SSL off` / `server does not support SSL` | turn on `ssl` on the cluster; the feed always needs it |
+| `cluster_name is not set on this cluster` | set `cluster_name = 'CODE'` in postgresql.conf and restart |
+| `cluster_name is X but sources.conf expects Y` | that `sources.conf` line points to the wrong host or port, or the cluster's `cluster_name` is wrong |
+| `view sys.dba_users not found` | the database has no EPAS Oracle-compatibility views |
+
+Contents of `pg_hba.conf`:
 
 | Message | Fix |
 |---|---|
@@ -278,16 +308,57 @@ Exit code 0 = both files published; 2 = nothing published (previous files untouc
 | `pg_hba.conf lines N, M point to different OUs` | the same login is on LDAP lines with both OUs: make them consistent |
 | `uses simple bind (no ldapbasedn), not supported` | convert the line to search + bind (`ldapbasedn`, `ldapbinddn`) |
 | `IDs longer than 32 characters` | shorten the cluster code (or the role name) |
-| `Invalid credentials (49)` from an AD profile | the `ldapbindpasswd` on those `pg_hba.conf` lines is wrong or expired |
-| `view sys.dba_users not found` | the database has no EPAS Oracle-compatibility views |
-| `cluster_name is not set on this cluster` | set `cluster_name = 'CODE'` in postgresql.conf and restart |
-| `cluster_name is X but sources.conf expects Y` | that `sources.conf` line points to the wrong host or port, or the cluster's `cluster_name` is wrong |
+
+AD (`ad_profiles` in `status.json`, details in `runs/<run_id>/ad/N.log`):
+
+| Message | Fix |
+|---|---|
+| `Invalid credentials (49)` | the `ldapbindpasswd` on those `pg_hba.conf` lines is wrong or expired; Postgres logins through those lines are probably broken too, so treat it as urgent |
+| `Can't contact LDAP server (-1)` | AD server down or firewall; for `ldaps`, also check `LDAPTLS_CACERT` |
+
+Central server:
+
+| Message | Fix |
+|---|---|
+| `another run is still active` | a previous run is still going or hung: `ps -fu sailfeed` |
+| `could not write to ...` | disk full or permissions on `OUTPUT_DIR`: `df -h`, `ls -ld` |
+| `psql: command not found` (cron log) | add EDB's `psql` folder to the crontab `PATH` |
+
+**Never comment out a failing cluster in `sources.conf` to let the others through.** SailPoint
+would treat all of its accounts as deleted, and as new again the next day. When a cluster is
+down for maintenance, let the run fail and run it by hand once the cluster is back.
+
+## Adding, removing or moving a cluster
+
+**Add:**
+1. Choose its code (3-4 characters; never changed later).
+2. On the cluster: [Cluster setup](#cluster-setup-dba-one-time-per-cluster) steps 1-3 (setup
+   script, `pg_hba.conf` line, `cluster_name` + restart).
+3. On the central server: one `~/.pgpass` line and one `sources.conf` line; check with
+   `psql -w "host=... port=5444 dbname=sailpoint user=sailpoint_feed sslmode=require" -c "SHOW cluster_name;"`.
+4. Run `scripts/collect_all.sh` by hand once. Cron needs no change.
+5. Tell the SailPoint team first: all of the cluster's accounts will appear as new.
+
+**Remove (decommissioned for good):**
+1. Tell the SailPoint team first: all of the cluster's accounts will disappear (deleted).
+2. On the central server: delete its `sources.conf` line and its `~/.pgpass` line.
+3. On the cluster, if still running: `DROP DATABASE sailpoint; DROP ROLE sailpoint_feed;`,
+   remove its `pg_hba.conf` line and reload.
+4. Never reuse the code for another cluster.
+
+Down for maintenance is not removed: leave the line in (see above).
+
+**Move to a new server** (migration, or a new EPAS version on a new host): keep the **same
+code**. On the new server run the cluster setup with `cluster_name` set to that code; on the
+central server change only HOST (and PORT) in `sources.conf` and `~/.pgpass`. SailPoint sees
+no change. After an in-place `pg_upgrade`, nothing changes; check the feed account can still
+read `pg_hba_file_rules` and `sys.dba_users`.
 
 ## Open items
 
 - [ ] SailPoint: confirm the `CODE:name` ID format and the rows layout of the Account file.
 - [ ] Type/subtype spelling against the customer's ID types definition document.
-- [ ] AD failure handling: today any AD failure stops the run (to revisit).
+- [x] AD failure handling: kept strict (any AD failure stops the run), decided 2026-11-09; revisit once SailPoint says how it handles blank names/owners.
 - [x] Least-privilege feed account: now the default in the setup script (`-v superuser=on` for the old behaviour).
 
 ## Making changes
