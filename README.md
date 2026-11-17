@@ -55,7 +55,6 @@ scripts/lib.sh                shared helpers
 docs/design.md                design, decisions and limitations
 docs/field_mapping.md         SailPoint column specs and where each value comes from
 docs/requirements_prompt.md   the requirements in one message (for AI assistants or new team members)
-old/                          earlier versions, kept for reference only (not used)
 ```
 
 ## Cluster setup (DBA, one time per cluster)
